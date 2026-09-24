@@ -65,7 +65,7 @@ git clone https://github.com/ChowHusky21/home-cybersecurity-lab.git
 
 ## Configuration & Usage
 
-No credentials are stored in this repository. If you reproduce this lab, keep any VM or service credentials in a local `.env` file (see `.env.example`) and never commit them. Run all services with the least privilege needed — the intentionally-vulnerable containers should stay on the isolated host-only network documented in the README, never bridged to a live network.
+No credentials are stored in this repository. If you reproduce this lab, copy `.env.example` to `.env`, fill in your own values (see [docs/target-services.md](docs/target-services.md) for which variable applies to which container), and pass it to each container with `docker run --env-file .env ...` — never commit the real `.env` file. Run all services with the least privilege needed — the intentionally-vulnerable containers should stay on the isolated host-only network documented above, never bridged to a live network.
 
 ## Troubleshooting Log
 Real debugging work performed while building this lab (container
