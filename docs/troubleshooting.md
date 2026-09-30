@@ -2,6 +2,34 @@
 
 Real debugging work encountered while building and maintaining this lab.
 
+## DVWA Crash-Loop: Missing File Inside the Image
+After DVWA had `--restart unless-stopped` applied (see below), it still
+failed to come back up cleanly on a fresh container creation — `docker ps`
+showed it stuck in a restart loop. Root cause, found by inspecting the
+container's logs and entrypoint script: the `kaakaww/dvwa-docker:latest`
+image's own entrypoint script expects a file at
+`/var/www/mysql_init.sql` that isn't actually present in the image — a
+packaging bug in the image itself. The script runs with `set -e`, so the
+failed read of that missing file kills the entire startup script before
+it ever reaches the command that starts Apache.
+
+This was fixed and re-broken three times in one session by manually
+recreating the container, before landing on a fix that survives a
+restart: override the container's entrypoint with a small wrapper that
+regenerates the placeholder file on every single start, before handing
+off to the image's real entrypoint:
+
+```bash
+docker rm -f dvwa
+docker run -d --name dvwa --restart unless-stopped -p 8080:80 \
+  --entrypoint sh kaakaww/dvwa-docker:latest \
+  -c "mkdir -p /var/www && touch /var/www/mysql_init.sql && exec /entrypoint.sh"
+```
+
+Confirmed durable with a direct restart test (`docker restart dvwa`,
+then `docker ps` showing `Up 14 seconds` rather than `Restarting`) —
+rather than just assuming the fix would hold.
+
 ## Containers Not Surviving a Restart
 After adding WebGoat as the fourth target, `docker ps` showed only 2 of 4
 containers running (`webgoat` and `ssh-target`) — DVWA and Juice Shop had
@@ -10,13 +38,14 @@ silently exited at some point. The root cause: none of the original
 so a target VM / Docker daemon restart didn't bring them back.
 
 - `docker start dvwa juice-shop` appeared to work for `juice-shop`, but
-  DVWA's restart attempt silently failed again — most likely stale
-  MySQL lock/PID files inside the bundled LAMP-stack image, left over from
-  an earlier unclean stop, causing `dvwa-docker`'s internal startup script
-  to fail on relaunch.
+DVWA's restart attempt silently failed again — most likely stale
+MySQL lock/PID files inside the bundled LAMP-stack image, left over from
+an earlier unclean stop, causing `dvwa-docker`'s internal startup script
+to fail on relaunch. (This turned out to be a distinct issue from the
+missing-file crash-loop documented above, which surfaced later.)
 - A separate fresh `docker run` (without `--name`) for DVWA then
-  succeeded, but created an auto-named orphan container
-  (`priceless_shtern`) instead of fixing the original.
+succeeded, but created an auto-named orphan container
+(`priceless_shtern`) instead of fixing the original.
 
 **Resolution:** removed the broken original `dvwa` container, stopped and
 removed `priceless_shtern`, then created a clean new `dvwa` container from
@@ -54,19 +83,28 @@ and are noted here for completeness, though their detailed command-by-command
 fixes live only in earlier Drive document revisions:
 
 - Kali's graphical installer showed a black screen — worked around by
-  adding a serial console device.
+adding a serial console device.
 - Kali's `eth0` was missing its NetworkManager profile after install —
-  fixed manually via `nmcli`.
+fixed manually via `nmcli`.
 - Cross-VM connectivity broke due to a stale network attachment — fixed
-  with a full VM restart.
+with a full VM restart.
 - The target VM's boot took longer than expected due to `netplan` waiting
-  on an interface that has no link by design — fixed by setting
-  `optional: true` for that interface in the netplan config.
+on an interface that has no link by design — fixed by setting
+`optional: true` for that interface in the netplan config.
 - Docker's official apt repository was abandoned after hitting a genuine
-  upstream GPG key mismatch; Ubuntu's native `docker.io` package was used
-  instead.
+upstream GPG key mismatch; Ubuntu's native `docker.io` package was used
+instead.
+- The Windows target VM's isolated network showed as "Unidentified
+network" in Windows (expected, since it has no gateway) and initially
+didn't respond to ping from the attacker VM; resolved with a Windows
+Defender Firewall rule enabling inbound ICMPv4 across all profiles,
+rather than fighting Windows to reclassify a gateway-less network as
+Private.
 
 ## Still Undecided
 - Whether to revisit MicroK8s later with a bumped RAM allocation.
 - Whether to add VS Code to the Kali VM via its apt repo (ARM64 snap
-  support was uncertain at setup time, so this was deferred).
+support was uncertain at setup time, so this was deferred).
+- Whether to investigate WebGoat's "(unhealthy)" status further if it
+ever becomes more than cosmetic — currently understood and not
+blocking.
